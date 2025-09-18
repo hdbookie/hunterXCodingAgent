@@ -186,6 +186,81 @@ def run_python(code: str) -> str:
     except Exception as e:
         return f"ERROR: {e}"
 
+# ============================
+# TASK MANAGEMENT SYSTEM
+# ============================
+
+# Global task storage (resets each run - keeps it simple)
+TASKS = []
+TASK_COUNTER = 0
+
+def create_task(description: str, priority: str = "medium") -> str:
+    """Create a new task with description and priority."""
+    global TASK_COUNTER
+    TASK_COUNTER += 1
+
+    task = {
+        "id": TASK_COUNTER,
+        "description": description,
+        "status": "pending",
+        "priority": priority
+    }
+    TASKS.append(task)
+    return f"Created task #{TASK_COUNTER}: {description}"
+
+def list_tasks() -> str:
+    """List all tasks with their current status."""
+    if not TASKS:
+        return "No tasks created yet"
+
+    result = "Current Tasks:\n" + "=" * 40 + "\n"
+
+    for task in TASKS:
+        status_icon = {
+            "pending": "☐",
+            "in_progress": "🔄",
+            "completed": "✅"
+        }.get(task["status"], "❓")
+
+        result += f"{status_icon} #{task['id']}: {task['description']} [{task['status']}]\n"
+
+    # Add summary
+    pending = len([t for t in TASKS if t["status"] == "pending"])
+    in_progress = len([t for t in TASKS if t["status"] == "in_progress"])
+    completed = len([t for t in TASKS if t["status"] == "completed"])
+
+    result += f"\nSummary: {pending} pending, {in_progress} in progress, {completed} completed"
+    return result
+
+def complete_task(task_id: str) -> str:
+    """Mark a task as completed."""
+    try:
+        task_id_int = int(task_id)
+        for task in TASKS:
+            if task["id"] == task_id_int:
+                task["status"] = "completed"
+                return f"✅ Completed task #{task_id}: {task['description']}"
+        return f"ERROR: Task #{task_id} not found"
+    except ValueError:
+        return f"ERROR: Invalid task ID '{task_id}'. Use a number."
+
+def update_task(task_id: str, status: str) -> str:
+    """Update task status (pending/in_progress/completed)."""
+    valid_statuses = ["pending", "in_progress", "completed"]
+    if status not in valid_statuses:
+        return f"ERROR: Invalid status '{status}'. Use: {', '.join(valid_statuses)}"
+
+    try:
+        task_id_int = int(task_id)
+        for task in TASKS:
+            if task["id"] == task_id_int:
+                old_status = task["status"]
+                task["status"] = status
+                return f"Updated task #{task_id} from '{old_status}' to '{status}'"
+        return f"ERROR: Task #{task_id} not found"
+    except ValueError:
+        return f"ERROR: Invalid task ID '{task_id}'. Use a number."
+
 # Map tools
 TOOLS = {
     "read_file": read_file,
@@ -195,6 +270,10 @@ TOOLS = {
     "run_bash": run_bash,
     "grep_search": grep_search,
     "run_python": run_python,
+    "create_task": create_task,
+    "list_tasks": list_tasks,
+    "complete_task": complete_task,
+    "update_task": update_task,
 }
 
 # ============================
@@ -211,11 +290,22 @@ Available tools:
 - run_bash(cmd) - Run allowed bash commands
 - grep_search(pattern, path) - Search for patterns in files
 - run_python(code) - Execute Python code
+- create_task(description, priority) - Create a new task
+- list_tasks() - List all tasks with status
+- complete_task(task_id) - Mark a task as completed
+- update_task(task_id, status) - Update task status
 
-CRITICAL: Always respond with valid JSON only:
+CRITICAL: Always respond with valid JSON only - ONE ACTION PER RESPONSE:
 {"action": "tool_name", "args": {"param": "value"}}
 or
 {"action": "DONE", "result": "description of what was accomplished"}
+
+For complex tasks, use task management:
+1. Start by creating tasks to break down the work
+2. Use list_tasks to track progress
+3. Work on one task at a time
+4. Use complete_task when finishing tasks
+5. Take ONE action per response
 
 Think step by step:
 1. Understand the goal
