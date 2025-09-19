@@ -8,6 +8,7 @@ from ..integrations.ollama_client import OllamaClient
 from .file_operations import FileOperations
 from .task_manager import TaskManager
 from .reflection import ReflectionSystem
+from .code_critic import CodeCritic
 from ..sub_agents.coordinator import SubAgentCoordinator
 from ..tools.mobile_tools import MobileTools
 from ..tools.testing_tools import TestingTools
@@ -27,7 +28,8 @@ class MobileWebAgent:
 
         self.file_ops = FileOperations(self.work_dir)
         self.task_manager = TaskManager()
-        self.reflection = ReflectionSystem(self.file_ops, self.task_manager)
+        self.code_critic = CodeCritic()
+        self.reflection = ReflectionSystem(self.file_ops, self.task_manager, code_critic=self.code_critic)
 
         # Initialize tools
         self.mobile_tools = MobileTools(self.file_ops)
@@ -58,6 +60,12 @@ class MobileWebAgent:
 
             # Reflection
             "reflect_and_assess": self.reflection.reflect_and_assess,
+            "assess_code_quality": self.reflection.assess_code_quality,
+
+            # Code quality
+            "create_code_critic": self._create_code_critic_sub_agent,
+            "critique_code": self._critique_code_wrapper,
+            "improve_code_iteratively": self._improve_code_iteratively,
 
             # Sub-agent coordination
             "analyze_prd_and_delegate": self.sub_agent_coordinator.analyze_prd_and_delegate,
@@ -285,3 +293,226 @@ Start by understanding the current directory state, create tasks for the goal, t
                     print(f"🔍 Reflection complete")
 
         return f"Max steps ({max_steps}) reached without completion."
+
+    def _create_code_critic_sub_agent(self, focus: str = "general") -> str:
+        """Create a specialized code critic sub-agent for iterative improvement."""
+        try:
+            agent_config = {
+                "name": f"code_critic_{focus}",
+                "type": "code_quality",
+                "focus": focus,
+                "tools": ["critique_code", "assess_code_quality", "read_file", "write_file", "edit_file"],
+                "prompt": f"""You are a specialized code quality critic focused on {focus}.
+
+Your mission: Analyze code for quality issues and provide actionable improvement suggestions.
+
+ANALYSIS AREAS:
+- Style and formatting consistency
+- Security vulnerabilities
+- Performance optimization opportunities
+- Maintainability and readability
+- Best practices adherence
+- Documentation completeness
+
+WORKFLOW:
+1. Read and analyze the target code file
+2. Use critique_code() to get detailed assessment
+3. Prioritize issues by severity (critical → high → medium → low)
+4. Provide specific, actionable suggestions with line numbers
+5. If authorized, implement improvements directly
+6. Re-analyze to verify improvements
+
+RESPONSE FORMAT:
+- Clear severity classification
+- Specific line references
+- Concrete improvement suggestions
+- Implementation priority order
+
+Focus on delivering practical, implementable feedback that improves code quality."""
+            }
+
+            # Register the sub-agent
+            agent_id = self.sub_agent_coordinator.create_specialized_sub_agent(
+                "code_quality", agent_config
+            )
+
+            return f"Created code critic sub-agent: {agent_id}"
+
+        except Exception as e:
+            return f"Error creating code critic sub-agent: {e}"
+
+    def _critique_code_wrapper(self, file_path: str, focus: str = "overall") -> str:
+        """Wrapper for code critique that handles file reading and formatting."""
+        try:
+            if not self.code_critic:
+                return "Code critic not initialized"
+
+            # Read the file
+            file_content = self.file_ops.read_file(file_path)
+            if file_content.startswith("ERROR"):
+                return f"Could not read file: {file_content}"
+
+            # Perform critique
+            critique_result = self.code_critic.critique_code(file_content, file_path)
+
+            # Format response for agent consumption
+            formatted_result = f"""
+CODE CRITIQUE RESULTS FOR: {file_path}
+{'=' * 60}
+
+QUALITY SCORE: {critique_result['quality_score']}/100
+OVERALL ASSESSMENT: {critique_result['overall_assessment']}
+
+ISSUES BREAKDOWN:
+- Total Issues: {critique_result['total_issues']}
+- Critical: {critique_result['severity_breakdown']['critical']}
+- High: {critique_result['severity_breakdown']['high']}
+- Medium: {critique_result['severity_breakdown']['medium']}
+- Low: {critique_result['severity_breakdown']['low']}
+
+PRIORITY RECOMMENDATIONS:
+"""
+            for rec in critique_result['recommendations']:
+                formatted_result += f"• {rec}\n"
+
+            if critique_result['issues_by_category']:
+                formatted_result += "\nDETAILED ISSUES:\n"
+                for category, issues in critique_result['issues_by_category'].items():
+                    formatted_result += f"\n{category.upper()}:\n"
+                    for issue in issues[:3]:  # Show top 3 issues per category
+                        line_info = f" (line {issue['line']})" if issue['line'] else ""
+                        formatted_result += f"  [{issue['severity']}]{line_info} {issue['message']}\n"
+                        formatted_result += f"  💡 {issue['suggestion']}\n"
+
+            return formatted_result
+
+        except Exception as e:
+            return f"Error during code critique: {e}"
+
+    def _improve_code_iteratively(self, file_path: str, max_iterations: int = 3, min_score_threshold: float = 85.0) -> str:
+        """Iteratively improve code quality through critique-improve cycles."""
+        try:
+            if not self.code_critic:
+                return "Code critic not initialized - cannot perform iterative improvement"
+
+            improvement_log = []
+            current_iteration = 0
+
+            # Initial assessment
+            initial_critique = self._critique_code_wrapper(file_path, "overall")
+            improvement_log.append(f"ITERATION 0 (Initial Assessment):\n{initial_critique}\n")
+
+            # Get initial score
+            file_content = self.file_ops.read_file(file_path)
+            if file_content.startswith("ERROR"):
+                return f"Could not read file for improvement: {file_content}"
+
+            current_critique = self.code_critic.critique_code(file_content, file_path)
+            current_score = current_critique['quality_score']
+
+            improvement_log.append(f"Starting score: {current_score}/100")
+
+            # Iterative improvement loop
+            for iteration in range(1, max_iterations + 1):
+                if current_score >= min_score_threshold:
+                    improvement_log.append(f"✅ Quality threshold ({min_score_threshold}) reached at iteration {iteration-1}")
+                    break
+
+                improvement_log.append(f"\n--- ITERATION {iteration} ---")
+
+                # Get critical and high priority issues
+                critical_issues = [issue for issues in current_critique['issues_by_category'].values()
+                                 for issue in issues if issue['severity'] in ['critical', 'high']]
+
+                if not critical_issues:
+                    improvement_log.append("No critical or high priority issues found")
+                    break
+
+                # Focus on top 3 most severe issues
+                top_issues = sorted(critical_issues,
+                                  key=lambda x: {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}[x['severity']],
+                                  reverse=True)[:3]
+
+                improvement_log.append(f"Addressing {len(top_issues)} priority issues:")
+
+                # Create improvement plan
+                improvement_plan = ""
+                for i, issue in enumerate(top_issues, 1):
+                    line_info = f" (line {issue['line']})" if issue['line'] else ""
+                    improvement_plan += f"{i}. [{issue['severity']}]{line_info} {issue['message']}\n"
+                    improvement_plan += f"   Solution: {issue['suggestion']}\n"
+
+                improvement_log.append(improvement_plan)
+
+                # Use LLM to implement improvements
+                improvement_prompt = f"""You are a code improvement specialist. Analyze this Python file and implement the specific improvements suggested by the code critic.
+
+FILE: {file_path}
+
+CURRENT ISSUES TO FIX:
+{improvement_plan}
+
+CURRENT CODE:
+{file_content}
+
+Your task:
+1. Implement the suggested improvements
+2. Focus on the most critical issues first
+3. Maintain existing functionality
+4. Follow Python best practices
+5. Ensure changes are minimal but effective
+
+Respond with the improved code only, no explanations."""
+
+                try:
+                    improved_code = self.ollama.generate(improvement_prompt, max_tokens=2000, temperature=0.1)
+
+                    # Basic validation - ensure it's still Python code
+                    if improved_code and "def " in improved_code and "import " in improved_code:
+                        # Write improved code
+                        write_result = self.file_ops.write_file(file_path, improved_code)
+
+                        if write_result.startswith("ERROR"):
+                            improvement_log.append(f"❌ Failed to write improvements: {write_result}")
+                            break
+
+                        # Re-assess quality
+                        new_critique = self.code_critic.critique_code(improved_code, file_path)
+                        new_score = new_critique['quality_score']
+
+                        score_improvement = new_score - current_score
+                        improvement_log.append(f"Score: {current_score} → {new_score} ({score_improvement:+.1f})")
+
+                        if new_score > current_score:
+                            improvement_log.append("✅ Quality improved")
+                            current_score = new_score
+                            current_critique = new_critique
+                            file_content = improved_code
+                        else:
+                            improvement_log.append("⚠️  No improvement detected")
+
+                    else:
+                        improvement_log.append("❌ Generated code appears invalid, skipping")
+
+                except Exception as e:
+                    improvement_log.append(f"❌ Improvement iteration failed: {e}")
+
+            # Final assessment
+            final_summary = f"""
+🔄 ITERATIVE CODE IMPROVEMENT COMPLETE
+{'=' * 50}
+
+File: {file_path}
+Iterations: {max_iterations}
+Final Score: {current_score}/100
+Threshold: {min_score_threshold}/100
+
+IMPROVEMENT LOG:
+{''.join(improvement_log)}
+
+FINAL STATUS: {'✅ PASSED' if current_score >= min_score_threshold else '⚠️  NEEDS MORE WORK'}
+"""
+            return final_summary
+
+        except Exception as e:
+            return f"Error during iterative improvement: {e}"

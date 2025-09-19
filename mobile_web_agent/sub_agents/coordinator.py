@@ -1,6 +1,6 @@
 """Sub-agent coordination system."""
 
-from typing import Dict, List, Any, TYPE_CHECKING
+from typing import Dict, Any, TYPE_CHECKING
 from .prd_parser import PRDParser
 from .specialist_factory import SpecialistFactory
 
@@ -37,7 +37,6 @@ class SubAgentCoordinator:
                 sub_tasks.append({
                     "type": "database_specialist",
                     "task": f"Create database schema with tables: {', '.join(entities)}. Include proper relationships, constraints, and security policies.",
-                    "tools": ["read_file", "write_file", "run_bash"],
                     "context": self.prd_parser.extract_database_schema(prd_content)
                 })
 
@@ -45,7 +44,6 @@ class SubAgentCoordinator:
                 sub_tasks.append({
                     "type": "frontend_specialist",
                     "task": f"Build React components: {', '.join(components)}. Use TypeScript, Tailwind CSS, and mobile-first responsive design.",
-                    "tools": ["create_responsive_component", "setup_tailwind", "create_mobile_layout", "read_file", "write_file", "edit_file"],
                     "context": self.prd_parser.extract_component_specs(prd_content)
                 })
 
@@ -53,7 +51,6 @@ class SubAgentCoordinator:
                 sub_tasks.append({
                     "type": "workflow_specialist",
                     "task": f"Implement user workflows: {', '.join(workflows)}. Create navigation, routing, and user journey flows.",
-                    "tools": ["create_responsive_component", "read_file", "write_file", "edit_file"],
                     "context": self.prd_parser.extract_workflow_specs(prd_content)
                 })
 
@@ -61,7 +58,6 @@ class SubAgentCoordinator:
                 sub_tasks.append({
                     "type": "api_specialist",
                     "task": f"Create API endpoints: {', '.join(api_endpoints)}. Implement CRUD operations with proper validation and error handling.",
-                    "tools": ["read_file", "write_file", "edit_file", "run_bash"],
                     "context": self.prd_parser.extract_api_specs(prd_content)
                 })
 
@@ -69,7 +65,6 @@ class SubAgentCoordinator:
             sub_tasks.append({
                 "type": "testing_specialist",
                 "task": "Create comprehensive test suite with Jest unit tests, Playwright E2E tests, and mobile performance testing.",
-                "tools": ["setup_jest", "setup_playwright", "create_unit_tests", "create_e2e_tests", "run_all_tests", "read_file", "write_file"],
                 "context": "Test all components, workflows, and API endpoints"
             })
 
@@ -82,7 +77,6 @@ class SubAgentCoordinator:
                 result = self.create_specialized_sub_agent(
                     task_spec['type'],
                     task_spec['task'],
-                    task_spec['tools'],
                     task_spec['context']
                 )
                 results.append(f"{task_spec['type']}: {result}")
@@ -106,11 +100,11 @@ Ready for integration and deployment.
         except Exception as e:
             return f"ERROR in PRD analysis and delegation: {e}"
 
-    def create_specialized_sub_agent(self, agent_type: str, task_description: str, allowed_tools: List[str], context: str) -> str:
+    def create_specialized_sub_agent(self, agent_type: str, task_description: str, context: str) -> str:
         """Create and run a specialized sub-agent for focused task."""
         try:
             return self.specialist_factory.create_and_run_specialist(
-                agent_type, task_description, allowed_tools, context
+                agent_type, task_description, context
             )
         except Exception as e:
             return f"ERROR creating {agent_type}: {e}"
